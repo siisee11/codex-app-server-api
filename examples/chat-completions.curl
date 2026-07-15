@@ -1,0 +1,9 @@
+curl http://127.0.0.1:8787/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.4",
+    "cwd": "/Users/dev/git/sub2api",
+    "messages": [
+      {"role": "user", "content": "What language is this repository mostly written in?"}
+    ]
+  }'

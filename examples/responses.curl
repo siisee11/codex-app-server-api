@@ -1,0 +1,8 @@
+curl -N http://127.0.0.1:8787/v1/responses \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.4",
+    "workspace_path": "/Users/dev/git/sub2api",
+    "input": "Summarize this repository in five bullets.",
+    "stream": true
+  }'
