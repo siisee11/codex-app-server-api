@@ -3,7 +3,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { adminHtml } from "./admin-ui.mjs";
 import { runCodexTurn } from "./codex-app-server-client.mjs";
+import { KeyStore } from "./key-store.mjs";
 import {
   chatCompletionResult,
   extractPromptFromChatCompletions,
@@ -20,18 +22,43 @@ const WORKSPACE_ROOTS = (process.env.CODEX_WORKSPACE_ROOTS || "")
   .split(",")
   .map((value) => expandPath(value.trim()))
   .filter(Boolean);
+const API_AUTH_REQUIRED = process.env.DISABLE_API_KEY_AUTH !== "true";
+
+const keyStore = new KeyStore();
+await keyStore.init();
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (!isAuthorized(req)) {
-      return sendJson(res, 401, { error: { type: "authentication_error", message: "Invalid bearer token" } });
-    }
-
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const pathname = normalizePathname(url.pathname);
 
+    if (req.method === "OPTIONS") {
+      return sendEmpty(res, 204);
+    }
+
     if (req.method === "GET" && (pathname === "/healthz" || pathname === "/readyz")) {
       return sendJson(res, 200, { ok: true, codex: process.env.CODEX_BIN || "codex" });
+    }
+
+    if (req.method === "GET" && (pathname === "/" || pathname === "/admin")) {
+      return sendHtml(res, 200, adminHtml({
+        authRequired: API_AUTH_REQUIRED,
+        defaultWorkspace: DEFAULT_WORKSPACE,
+        workspaceRoots: WORKSPACE_ROOTS,
+      }));
+    }
+
+    if (pathname.startsWith("/admin/api/")) {
+      return await handleAdminApi(req, res, pathname);
+    }
+
+    if (API_AUTH_REQUIRED && !(await isAuthorized(req))) {
+      return sendJson(res, 401, {
+        error: {
+          type: "authentication_error",
+          message: "API key is required. Create one at /admin and pass Authorization: Bearer <key>.",
+        },
+      });
     }
 
     if (req.method === "GET" && (pathname === "/v1/models" || pathname === "/models" || pathname === "/backend-api/codex/models")) {
@@ -62,6 +89,37 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`codex-app-server-api listening on http://${HOST}:${PORT}`);
 });
+
+async function handleAdminApi(req, res, pathname) {
+  if (!isAdmin(req)) {
+    return sendJson(res, 401, { error: { type: "authentication_error", message: "Invalid admin token" } });
+  }
+
+  if (req.method === "GET" && pathname === "/admin/api/keys") {
+    return sendJson(res, 200, { keys: keyStore.listKeys() });
+  }
+
+  if (req.method === "POST" && pathname === "/admin/api/keys") {
+    const body = await readJson(req);
+    const workspace = validateWorkspace(body.workspace_path || body.workspacePath || DEFAULT_WORKSPACE);
+    const key = await keyStore.createKey({
+      name: body.name,
+      workspacePath: workspace,
+    });
+    return sendJson(res, 201, key);
+  }
+
+  if (req.method === "DELETE" && pathname.startsWith("/admin/api/keys/")) {
+    const id = decodeURIComponent(pathname.slice("/admin/api/keys/".length));
+    const revoked = await keyStore.revokeKey(id);
+    if (!revoked) {
+      return sendJson(res, 404, { error: { type: "not_found_error", message: "API key not found" } });
+    }
+    return sendJson(res, 200, revoked);
+  }
+
+  return sendJson(res, 404, { error: { type: "not_found_error", message: `No admin route for ${req.method} ${pathname}` } });
+}
 
 async function handleResponses(req, res, body) {
   const workspace = resolveWorkspace(req, body);
@@ -193,7 +251,27 @@ function normalizePathname(pathname) {
 }
 
 function resolveWorkspace(req, body) {
-  const raw = body.cwd || body.workspace_path || body.workspacePath || body.workspace || req.headers["x-workspace-path"] || DEFAULT_WORKSPACE;
+  const raw = body.cwd ||
+    body.workspace_path ||
+    body.workspacePath ||
+    body.workspace ||
+    req.headers["x-workspace-path"] ||
+    req.apiKey?.workspace_path ||
+    DEFAULT_WORKSPACE;
+  const workspace = validateWorkspace(raw);
+  if (req.apiKey?.workspace_path) {
+    const scope = validateWorkspace(req.apiKey.workspace_path);
+    if (workspace !== scope && !workspace.startsWith(`${scope}${path.sep}`)) {
+      throw Object.assign(new Error("workspace path is outside this API key scope"), {
+        statusCode: 403,
+        type: "permission_error",
+      });
+    }
+  }
+  return workspace;
+}
+
+function validateWorkspace(raw) {
   const workspace = expandPath(String(raw));
   if (!path.isAbsolute(workspace)) {
     throw badRequest("workspace path must be absolute");
@@ -220,10 +298,28 @@ function expandPath(value) {
   return path.resolve(value);
 }
 
-function isAuthorized(req) {
+async function isAuthorized(req) {
   const token = process.env.API_BEARER_TOKEN;
-  if (!token) return true;
-  return req.headers.authorization === `Bearer ${token}`;
+  const requestToken = bearerToken(req) || headerToken(req);
+  if (token && requestToken === token) return true;
+  const apiKey = await keyStore.verifyApiKey(requestToken);
+  if (!apiKey) return false;
+  req.apiKey = apiKey;
+  return true;
+}
+
+function isAdmin(req) {
+  return keyStore.isAdminToken(req.headers["x-admin-token"] || bearerToken(req));
+}
+
+function bearerToken(req) {
+  const value = req.headers.authorization || "";
+  const match = /^Bearer\s+(.+)$/i.exec(value);
+  return match ? match[1].trim() : "";
+}
+
+function headerToken(req) {
+  return String(req.headers["x-api-key"] || req.headers["x-goog-api-key"] || "").trim();
 }
 
 function readJson(req) {
@@ -266,8 +362,27 @@ function writeSse(res, event, data) {
 }
 
 function sendJson(res, status, data) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "authorization,content-type,x-api-key,x-goog-api-key,x-workspace-path,x-admin-token",
+    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+  });
   res.end(JSON.stringify(data, null, 2));
+}
+
+function sendHtml(res, status, html) {
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
+  res.end(html);
+}
+
+function sendEmpty(res, status) {
+  res.writeHead(status, {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "authorization,content-type,x-api-key,x-goog-api-key,x-workspace-path,x-admin-token",
+    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+  });
+  res.end();
 }
 
 function badRequest(message) {

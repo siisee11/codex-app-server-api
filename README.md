@@ -10,6 +10,10 @@ responses.
 ## Endpoints
 
 - `GET /healthz`
+- `GET /admin`
+- `GET /admin/api/keys`
+- `POST /admin/api/keys`
+- `DELETE /admin/api/keys/:id`
 - `GET /v1/models`
 - `GET /models`
 - `GET /backend-api/codex/models`
@@ -50,6 +54,62 @@ CODEX_MODELS=gpt-5.4,gpt-5.3-codex,gpt-5-codex
 ```
 
 If `API_BEARER_TOKEN` is set, pass `Authorization: Bearer <token>`.
+
+## API Keys
+
+Open `http://127.0.0.1:8787/admin` to issue API keys from the local web UI.
+The admin token is read from `ADMIN_TOKEN` or generated at `data/admin-token.txt`
+on first start. API key records are stored in `data/api-keys.json`; only SHA-256
+hashes are persisted, so the full key is shown once when it is created.
+
+By default generation endpoints require an issued API key:
+
+```bash
+curl http://127.0.0.1:8787/v1/responses \
+  -H 'authorization: Bearer sk-codex-...' \
+  -H 'content-type: application/json' \
+  -d '{"workspace_path":"/Users/dev/git/sub2api","input":"Say OK"}'
+```
+
+Set `DISABLE_API_KEY_AUTH=true` to allow unauthenticated local calls.
+
+## Cloudflare Edge Deployment
+
+This repository also includes a Wrangler Worker that fronts the local origin
+server through Cloudflare Tunnel:
+
+- API: `https://codex-app-server-api.wordbricks.ai`
+- Admin: `https://codex-app-server-admin.wordbricks.ai`
+- Tunnel origin: `https://codex-app-server-origin.wordbricks.ai`
+
+The API host requires an API key on every real request. Accepted headers follow
+the same order as sub2api: `Authorization: Bearer ...`, then `x-api-key`, then
+`x-goog-api-key`.
+
+The admin host serves a separate `/login` page at the edge and sets a signed
+HttpOnly session cookie after a successful login. Local credentials are stored in:
+
+```text
+data/cloudflare-admin-credentials.txt
+```
+
+The Worker forwards admin API calls to the origin with `ORIGIN_ADMIN_TOKEN`,
+which is stored as a Wrangler secret and sourced locally from `data/admin-token.txt`.
+
+Deploy:
+
+```bash
+wrangler deploy
+```
+
+Required Wrangler secrets:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+ADMIN_SESSION_SECRET
+ORIGIN_ADMIN_TOKEN
+```
 
 ## Responses API Example
 

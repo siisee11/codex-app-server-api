@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/server.mjs",
     "dev": "node --watch src/server.mjs",
-    "check": "node --check src/server.mjs && node --check src/codex-app-server-client.mjs && node --check src/openai-shapes.mjs"
+    "check": "node --check src/server.mjs && node --check src/codex-app-server-client.mjs && node --check src/openai-shapes.mjs && node --check src/key-store.mjs && node --check src/admin-ui.mjs && node --check worker/edge-gateway.mjs",
+    "dev:edge": "wrangler dev",
+    "deploy:edge": "wrangler deploy"
   },
   "engines": {
     "node": ">=18"

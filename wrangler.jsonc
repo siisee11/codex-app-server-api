@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "codex-app-server-edge",
+  "main": "worker/edge-gateway.mjs",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "codex-app-server-api.wordbricks.ai",
+      "custom_domain": true
+    },
+    {
+      "pattern": "codex-app-server-admin.wordbricks.ai",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "API_HOST": "codex-app-server-api.wordbricks.ai",
+    "ADMIN_HOST": "codex-app-server-admin.wordbricks.ai",
+    "ORIGIN_BASE_URL": "https://codex-app-server-origin.wordbricks.ai"
+  },
+  "secrets": {
+    "required": [
+      "ADMIN_USERNAME",
+      "ADMIN_PASSWORD",
+      "ADMIN_SESSION_SECRET",
+      "ORIGIN_ADMIN_TOKEN"
+    ]
+  }
+}
