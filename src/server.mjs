@@ -7,10 +7,12 @@ import { adminHtml } from "./admin-ui.mjs";
 import { runCodexTurn } from "./codex-app-server-client.mjs";
 import { KeyStore } from "./key-store.mjs";
 import {
+  availableModelIds,
   chatCompletionResult,
   extractPromptFromChatCompletions,
   extractPromptFromResponses,
   modelList,
+  normalizeModelIds,
   responsesResult,
 } from "./openai-shapes.mjs";
 
@@ -40,7 +42,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, codex: process.env.CODEX_BIN || "codex" });
     }
 
-    if (req.method === "GET" && (pathname === "/" || pathname === "/admin" || pathname === "/settings" || pathname === "/admin/settings")) {
+    if (req.method === "GET" && isAdminPagePath(pathname)) {
       return sendHtml(res, 200, adminHtml({
         authRequired: API_AUTH_REQUIRED,
         defaultWorkspace: DEFAULT_WORKSPACE,
@@ -62,7 +64,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && (pathname === "/v1/models" || pathname === "/models" || pathname === "/backend-api/codex/models")) {
-      return sendJson(res, 200, modelList());
+      return sendJson(res, 200, modelList(req.apiKey?.allowed_models));
     }
 
     if (req.method === "POST" && isResponsesPath(pathname)) {
@@ -99,6 +101,10 @@ async function handleAdminApi(req, res, pathname) {
     return sendJson(res, 200, { keys: keyStore.listKeys() });
   }
 
+  if (req.method === "GET" && pathname === "/admin/api/models") {
+    return sendJson(res, 200, { models: availableModelIds() });
+  }
+
   if (req.method === "POST" && pathname === "/admin/api/keys") {
     const body = await readJson(req);
     const rawWorkspace = body.workspace_path || body.workspacePath || "";
@@ -120,6 +126,9 @@ async function handleAdminApi(req, res, pathname) {
     if (body.workspace_path !== undefined || body.workspacePath !== undefined) {
       const rawWorkspace = body.workspace_path ?? body.workspacePath ?? "";
       updates.workspacePath = rawWorkspace ? validateWorkspace(rawWorkspace) : "";
+    }
+    if (body.allowed_models !== undefined || body.allowedModels !== undefined) {
+      updates.allowedModels = normalizeModelIds(body.allowed_models ?? body.allowedModels ?? []);
     }
 
     const updated = await keyStore.updateKey(id, updates);
@@ -143,7 +152,7 @@ async function handleAdminApi(req, res, pathname) {
 
 async function handleResponses(req, res, body) {
   const workspace = resolveWorkspace(req, body);
-  const model = body.model || process.env.CODEX_MODEL || undefined;
+  const model = resolveModel(req, body);
   const prompt = extractPromptFromResponses(body);
   if (!prompt.trim()) {
     return sendJson(res, 400, { error: { type: "invalid_request_error", message: "input, messages, prompt, or text is required" } });
@@ -161,7 +170,7 @@ async function handleResponses(req, res, body) {
 
 async function handleChatCompletions(req, res, body) {
   const workspace = resolveWorkspace(req, body);
-  const model = body.model || process.env.CODEX_MODEL || undefined;
+  const model = resolveModel(req, body);
   const prompt = extractPromptFromChatCompletions(body);
   if (!prompt.trim()) {
     return sendJson(res, 400, { error: { type: "invalid_request_error", message: "messages is required" } });
@@ -268,6 +277,40 @@ function isResponsesPath(pathname) {
 
 function normalizePathname(pathname) {
   return pathname.replace(/\/+$/, "") || "/";
+}
+
+function isAdminPagePath(pathname) {
+  return pathname === "/" ||
+    pathname === "/admin" ||
+    pathname === "/settings" ||
+    pathname === "/admin/settings" ||
+    pathname.startsWith("/settings/") ||
+    pathname.startsWith("/admin/settings/");
+}
+
+function resolveModel(req, body) {
+  const model = body.model || process.env.CODEX_MODEL || undefined;
+  assertModelAllowed(req, model);
+  return model;
+}
+
+function assertModelAllowed(req, model) {
+  const allowedModels = normalizeModelIds(req.apiKey?.allowed_models);
+  if (!allowedModels.length) return;
+
+  if (!model) {
+    throw Object.assign(new Error("model is required for this API key"), {
+      statusCode: 400,
+      type: "invalid_request_error",
+    });
+  }
+
+  if (!allowedModels.includes(String(model))) {
+    throw Object.assign(new Error(`model ${model} is not allowed for this API key`), {
+      statusCode: 403,
+      type: "permission_error",
+    });
+  }
 }
 
 function resolveWorkspace(req, body) {

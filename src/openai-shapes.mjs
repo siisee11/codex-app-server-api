@@ -105,11 +105,16 @@ export function chatCompletionResult({ model, outputText, threadId, turn }) {
   };
 }
 
-export function modelList() {
-  const ids = (process.env.CODEX_MODELS || "gpt-5.4,gpt-5.3-codex,gpt-5.3-codex-spark,gpt-5-codex")
+export function availableModelIds() {
+  return (process.env.CODEX_MODELS || "gpt-5.4,gpt-5.3-codex,gpt-5.3-codex-spark,gpt-5-codex")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+export function modelList(allowedModels = []) {
+  const allowed = normalizeModelIds(allowedModels);
+  const ids = allowed.length ? allowed : availableModelIds();
   return {
     object: "list",
     data: ids.map((id) => ({
@@ -119,6 +124,18 @@ export function modelList() {
       owned_by: "codex-app-server",
     })),
   };
+}
+
+export function normalizeModelIds(models = []) {
+  const seen = new Set();
+  const normalized = [];
+  for (const model of Array.isArray(models) ? models : []) {
+    const id = String(model || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
+  }
+  return normalized;
 }
 
 function randomId() {

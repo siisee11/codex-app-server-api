@@ -165,6 +165,61 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
       align-items: center;
       flex-wrap: wrap;
     }
+    .checkline {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 14px;
+      margin: 0;
+    }
+    .checkline input {
+      width: auto;
+    }
+    .modelOptions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .modelOption {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 9px 10px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .modelOption input {
+      width: auto;
+      flex: 0 0 auto;
+    }
+    .tagList {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid #cbd1da;
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+    .tag button {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0 2px;
+      font-size: 16px;
+      line-height: 1;
+    }
     .notice {
       display: none;
       border-color: #b7d0ff;
@@ -199,7 +254,7 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
         background: #111318;
         color: #edf0f5;
       }
-      section, input, select, button.secondary {
+      section, input, select, button.secondary, .modelOption, .tag {
         background: #181b21;
         border-color: #303641;
       }
@@ -280,6 +335,7 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
               <th>Name</th>
               <th>Key</th>
               <th>Workspace</th>
+              <th>Models</th>
               <th>Created</th>
               <th>Last used</th>
               <th></th>
@@ -310,6 +366,23 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
           <button id="saveKeySettings">Save</button>
         </div>
         <div class="muted" style="margin-top: 8px">Leave workspace blank to use the server default workspace.</div>
+        <div style="margin-top: 16px">
+          <label class="checkline">
+            <input id="allowAllModels" type="checkbox">
+            <span>Allow all configured models</span>
+          </label>
+          <div id="modelRestrictionPanel">
+            <div class="muted" style="margin-top: 8px">Choose which models this API key can call. You can add custom model IDs if needed.</div>
+            <div id="modelOptions" class="modelOptions"></div>
+            <div class="row" style="margin-top: 10px">
+              <input id="customModelId" placeholder="custom-model-id">
+              <button id="addCustomModel" class="secondary" type="button">Add model</button>
+              <button id="selectAllModels" class="secondary" type="button">Select all</button>
+              <button id="clearModels" class="secondary" type="button">Clear</button>
+            </div>
+            <div id="customModels" class="tagList"></div>
+          </div>
+        </div>
         <div id="settingsError" class="error"></div>
         <div id="settingsSuccess" class="success"></div>
       </section>
@@ -333,6 +406,14 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
       curlExample: document.getElementById("curlExample"),
       settingsKey: document.getElementById("settingsKey"),
       settingsWorkspacePath: document.getElementById("settingsWorkspacePath"),
+      allowAllModels: document.getElementById("allowAllModels"),
+      modelRestrictionPanel: document.getElementById("modelRestrictionPanel"),
+      modelOptions: document.getElementById("modelOptions"),
+      customModelId: document.getElementById("customModelId"),
+      addCustomModel: document.getElementById("addCustomModel"),
+      selectAllModels: document.getElementById("selectAllModels"),
+      clearModels: document.getElementById("clearModels"),
+      customModels: document.getElementById("customModels"),
       saveKeySettings: document.getElementById("saveKeySettings"),
       tokenError: document.getElementById("tokenError"),
       createError: document.getElementById("createError"),
@@ -340,21 +421,39 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
       settingsSuccess: document.getElementById("settingsSuccess"),
     };
     let currentKeys = [];
+    let availableModels = [];
+    let customModels = [];
 
     els.adminToken.value = localStorage.getItem("codexApiAdminToken") || "";
     renderExample("sk-codex-...");
-    setActivePage(location.pathname.endsWith("/settings") ? "settings" : "keys");
+    setActivePage(location.pathname.includes("settings") ? "settings" : "keys");
 
     els.saveToken.addEventListener("click", () => {
       localStorage.setItem("codexApiAdminToken", els.adminToken.value.trim());
-      loadKeys();
+      loadAdminData();
     });
-    els.refreshKeys.addEventListener("click", loadKeys);
+    els.refreshKeys.addEventListener("click", loadAdminData);
     els.createKey.addEventListener("click", createKey);
     els.copyKey.addEventListener("click", async () => {
       await navigator.clipboard.writeText(els.newKey.textContent);
     });
     els.settingsKey.addEventListener("change", () => selectSettingsKey(els.settingsKey.value));
+    els.allowAllModels.addEventListener("change", updateModelRestrictionState);
+    els.addCustomModel.addEventListener("click", addCustomModel);
+    els.customModelId.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addCustomModel();
+      }
+    });
+    els.selectAllModels.addEventListener("click", () => {
+      for (const checkbox of modelCheckboxes()) checkbox.checked = true;
+    });
+    els.clearModels.addEventListener("click", () => {
+      for (const checkbox of modelCheckboxes()) checkbox.checked = false;
+      customModels = [];
+      renderCustomModels();
+    });
     els.saveKeySettings.addEventListener("click", saveKeySettings);
 
     async function api(path, options = {}) {
@@ -384,6 +483,21 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
       }
     }
 
+    async function loadModels() {
+      const data = await api("/admin/api/models");
+      availableModels = data.models || [];
+      renderModelOptions();
+    }
+
+    async function loadAdminData() {
+      try {
+        await loadModels();
+      } catch (error) {
+        els.tokenError.textContent = error.message;
+      }
+      await loadKeys();
+    }
+
     async function createKey() {
       els.createError.textContent = "";
       try {
@@ -395,7 +509,7 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
         });
         els.newKey.textContent = data.key;
         els.newKeyNotice.style.display = "block";
-        els.configureNewKey.href = "/settings?key=" + encodeURIComponent(data.id);
+        els.configureNewKey.href = "/settings/" + encodeURIComponent(data.id);
         renderExample(data.key);
         await loadKeys();
       } catch (error) {
@@ -418,6 +532,7 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
           method: "PATCH",
           body: JSON.stringify({
             workspace_path: els.settingsWorkspacePath.value,
+            allowed_models: selectedAllowedModels(),
           }),
         });
         els.settingsSuccess.textContent = "Saved.";
@@ -430,7 +545,7 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
 
     function renderKeys(keys) {
       if (!keys.length) {
-        els.keysBody.innerHTML = '<tr><td colspan="6" class="muted">No keys yet.</td></tr>';
+        els.keysBody.innerHTML = '<tr><td colspan="7" class="muted">No keys yet.</td></tr>';
         return;
       }
       els.keysBody.innerHTML = "";
@@ -443,29 +558,31 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
           <td></td>
           <td></td>
           <td></td>
+          <td></td>
         \`;
         tr.children[0].textContent = key.name;
         tr.children[1].firstChild.textContent = key.key_preview;
         tr.children[2].firstChild.textContent = key.workspace_path || "(server default)";
-        tr.children[3].textContent = formatDate(key.created_at);
-        tr.children[4].textContent = formatDate(key.last_used_at);
+        tr.children[3].textContent = describeModels(key.allowed_models || []);
+        tr.children[4].textContent = formatDate(key.created_at);
+        tr.children[5].textContent = formatDate(key.last_used_at);
         const settingsButton = document.createElement("button");
         settingsButton.className = "secondary";
         settingsButton.textContent = "Settings";
         settingsButton.addEventListener("click", () => {
-          location.href = "/settings?key=" + encodeURIComponent(key.id);
+          location.href = "/settings/" + encodeURIComponent(key.id);
         });
         const button = document.createElement("button");
         button.className = "danger";
         button.textContent = "Revoke";
         button.addEventListener("click", () => revokeKey(key.id));
-        tr.children[5].append(settingsButton, button);
+        tr.children[6].append(settingsButton, button);
         els.keysBody.append(tr);
       }
     }
 
     function renderSettingsOptions(keys) {
-      const previous = new URLSearchParams(location.search).get("key") || els.settingsKey.value;
+      const previous = selectedKeyFromLocation() || els.settingsKey.value;
       els.settingsKey.innerHTML = "";
       for (const key of keys) {
         const option = document.createElement("option");
@@ -485,6 +602,7 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
       if (!key) return;
       els.settingsKey.value = key.id;
       els.settingsWorkspacePath.value = key.workspace_path || "";
+      applyAllowedModels(key.allowed_models || []);
     }
 
     function setActivePage(page) {
@@ -499,11 +617,121 @@ export function adminHtml({ authRequired, defaultWorkspace, workspaceRoots }) {
       els.curlExample.textContent = \`curl http://127.0.0.1:${escapeJs(String(process.env.PORT || 8787))}/v1/responses \\\\\\n  -H 'authorization: Bearer \${key}' \\\\\\n  -H 'content-type: application/json' \\\\\\n  -d '{"model":"gpt-5.4","input":"Summarize this repo briefly."}'\`;
     }
 
+    function renderModelOptions() {
+      els.modelOptions.innerHTML = "";
+      for (const model of availableModels) {
+        const label = document.createElement("label");
+        label.className = "modelOption";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = model;
+        checkbox.dataset.modelCheckbox = "1";
+        const text = document.createElement("span");
+        text.textContent = model;
+        label.append(checkbox, text);
+        els.modelOptions.append(label);
+      }
+      const selectedKey = currentKeys.find((key) => key.id === els.settingsKey.value);
+      if (selectedKey) applyAllowedModels(selectedKey.allowed_models || []);
+    }
+
+    function applyAllowedModels(models) {
+      const allowed = unique(models);
+      els.allowAllModels.checked = allowed.length === 0;
+      const allowedSet = new Set(allowed);
+      for (const checkbox of modelCheckboxes()) {
+        checkbox.checked = allowedSet.has(checkbox.value);
+      }
+      customModels = allowed.filter((model) => !availableModels.includes(model));
+      renderCustomModels();
+      updateModelRestrictionState();
+    }
+
+    function selectedAllowedModels() {
+      if (els.allowAllModels.checked) return [];
+      const selected = modelCheckboxes()
+        .filter((checkbox) => checkbox.checked)
+        .map((checkbox) => checkbox.value);
+      const models = unique([...selected, ...customModels]);
+      if (!models.length) {
+        throw new Error("Select at least one model or allow all configured models.");
+      }
+      return models;
+    }
+
+    function addCustomModel() {
+      const model = els.customModelId.value.trim();
+      if (!model) return;
+      if (!customModels.includes(model) && !availableModels.includes(model)) {
+        customModels.push(model);
+      }
+      const checkbox = modelCheckboxes().find((item) => item.value === model);
+      if (checkbox) checkbox.checked = true;
+      els.customModelId.value = "";
+      renderCustomModels();
+    }
+
+    function renderCustomModels() {
+      els.customModels.innerHTML = "";
+      for (const model of customModels) {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        const text = document.createElement("span");
+        text.textContent = model;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "x";
+        remove.addEventListener("click", () => {
+          customModels = customModels.filter((item) => item !== model);
+          renderCustomModels();
+        });
+        tag.append(text, remove);
+        els.customModels.append(tag);
+      }
+    }
+
+    function updateModelRestrictionState() {
+      const disabled = els.allowAllModels.checked;
+      els.modelRestrictionPanel.style.opacity = disabled ? ".55" : "1";
+      for (const control of [
+        ...modelCheckboxes(),
+        els.customModelId,
+        els.addCustomModel,
+        els.selectAllModels,
+        els.clearModels,
+      ]) {
+        control.disabled = disabled;
+      }
+    }
+
+    function modelCheckboxes() {
+      return Array.from(document.querySelectorAll("[data-model-checkbox]"));
+    }
+
+    function describeModels(models) {
+      const allowed = unique(models);
+      if (!allowed.length) return "All";
+      if (allowed.length <= 2) return allowed.join(", ");
+      return allowed.slice(0, 2).join(", ") + " +" + (allowed.length - 2);
+    }
+
+    function selectedKeyFromLocation() {
+      const queryKey = new URLSearchParams(location.search).get("key");
+      if (queryKey) return queryKey;
+      const parts = location.pathname.split("/").filter(Boolean);
+      if (parts[0] === "admin" && parts[1] === "settings" && parts[2]) return decodeURIComponent(parts[2]);
+      return parts[0] === "settings" && parts[1] ? decodeURIComponent(parts[1]) : "";
+    }
+
+    function unique(values) {
+      return Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
+    }
+
     function formatDate(value) {
       return value ? new Date(value).toLocaleString() : "";
     }
 
-    loadKeys();
+    loadAdminData();
   </script>
 </body>
 </html>`;

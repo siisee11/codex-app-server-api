@@ -75,6 +75,7 @@ export class KeyStore {
       key_hash: hashSecret(secret),
       key_preview: previewSecret(secret),
       workspace_path: String(workspacePath || "").trim(),
+      allowed_models: [],
       created_at: now,
       last_used_at: null,
       revoked_at: null,
@@ -85,7 +86,7 @@ export class KeyStore {
     return { ...publicKeyRecord(record), key: secret };
   }
 
-  async updateKey(id, { name, workspacePath } = {}) {
+  async updateKey(id, { name, workspacePath, allowedModels } = {}) {
     const key = this.data.keys.find((item) => item.id === id);
     if (!key || key.revoked_at) return null;
 
@@ -94,6 +95,9 @@ export class KeyStore {
     }
     if (workspacePath !== undefined) {
       key.workspace_path = String(workspacePath || "").trim();
+    }
+    if (allowedModels !== undefined) {
+      key.allowed_models = normalizeModelIds(allowedModels);
     }
     key.updated_at = new Date().toISOString();
 
@@ -126,11 +130,24 @@ function publicKeyRecord(key) {
     name: key.name,
     key_preview: key.key_preview,
     workspace_path: key.workspace_path || "",
+    allowed_models: normalizeModelIds(key.allowed_models),
     created_at: key.created_at,
     updated_at: key.updated_at || null,
     last_used_at: key.last_used_at,
     revoked_at: key.revoked_at,
   };
+}
+
+function normalizeModelIds(models = []) {
+  const seen = new Set();
+  const normalized = [];
+  for (const model of Array.isArray(models) ? models : []) {
+    const id = String(model || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
+  }
+  return normalized;
 }
 
 function hashSecret(secret) {

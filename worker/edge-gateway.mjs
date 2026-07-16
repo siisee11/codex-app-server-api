@@ -55,7 +55,7 @@ async function handleAdminRequest(request, env) {
     return adminUnauthorizedResponse(request);
   }
 
-  if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/admin" || url.pathname === "/settings" || url.pathname === "/admin/settings")) {
+  if (request.method === "GET" && isAdminPagePath(url.pathname)) {
     return htmlResponse(adminHtml(env));
   }
 
@@ -363,6 +363,15 @@ function adminUnauthorizedResponse(request) {
 
 function acceptsJson(request) {
   return (request.headers.get("accept") || "").includes("application/json");
+}
+
+function isAdminPagePath(pathname) {
+  return pathname === "/" ||
+    pathname === "/admin" ||
+    pathname === "/settings" ||
+    pathname === "/admin/settings" ||
+    pathname.startsWith("/settings/") ||
+    pathname.startsWith("/admin/settings/");
 }
 
 function sanitizeNextPath(value) {
@@ -753,6 +762,61 @@ function adminHtml(env) {
       color: #667085;
       font-size: 13px;
     }
+    .checkline {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 14px;
+      margin: 0;
+    }
+    .checkline input {
+      width: auto;
+    }
+    .modelOptions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .modelOption {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid #dfe4eb;
+      border-radius: 6px;
+      padding: 9px 10px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .modelOption input {
+      width: auto;
+      flex: 0 0 auto;
+    }
+    .tagList {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid #c8d0dc;
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+    .tag button {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0 2px;
+      font-size: 16px;
+      line-height: 1;
+    }
     .notice {
       display: none;
       background: #edf5ff;
@@ -787,7 +851,7 @@ function adminHtml(env) {
         background: #101319;
         color: #edf1f7;
       }
-      section, input, select, button.secondary {
+      section, input, select, button.secondary, .modelOption, .tag {
         background: #181c23;
         border-color: #303744;
       }
@@ -858,6 +922,7 @@ function adminHtml(env) {
               <th>Name</th>
               <th>Key</th>
               <th>Workspace</th>
+              <th>Models</th>
               <th>Created</th>
               <th>Last used</th>
               <th></th>
@@ -889,6 +954,23 @@ function adminHtml(env) {
           <button id="saveKeySettings">Save</button>
         </div>
         <div class="muted" style="margin-top: 8px">Leave workspace blank to use the server default workspace.</div>
+        <div style="margin-top: 16px">
+          <label class="checkline">
+            <input id="allowAllModels" type="checkbox">
+            <span>Allow all configured models</span>
+          </label>
+          <div id="modelRestrictionPanel">
+            <div class="muted" style="margin-top: 8px">Choose which models this API key can call. You can add custom model IDs if needed.</div>
+            <div id="modelOptions" class="modelOptions"></div>
+            <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap">
+              <input id="customModelId" placeholder="custom-model-id">
+              <button id="addCustomModel" class="secondary" type="button">Add model</button>
+              <button id="selectAllModels" class="secondary" type="button">Select all</button>
+              <button id="clearModels" class="secondary" type="button">Clear</button>
+            </div>
+            <div id="customModels" class="tagList"></div>
+          </div>
+        </div>
         <div id="settingsError" class="error"></div>
         <div id="settingsSuccess" class="success"></div>
       </section>
@@ -908,6 +990,14 @@ function adminHtml(env) {
       keysBody: document.getElementById("keysBody"),
       settingsKey: document.getElementById("settingsKey"),
       settingsWorkspacePath: document.getElementById("settingsWorkspacePath"),
+      allowAllModels: document.getElementById("allowAllModels"),
+      modelRestrictionPanel: document.getElementById("modelRestrictionPanel"),
+      modelOptions: document.getElementById("modelOptions"),
+      customModelId: document.getElementById("customModelId"),
+      addCustomModel: document.getElementById("addCustomModel"),
+      selectAllModels: document.getElementById("selectAllModels"),
+      clearModels: document.getElementById("clearModels"),
+      customModels: document.getElementById("customModels"),
       saveKeySettings: document.getElementById("saveKeySettings"),
       createError: document.getElementById("createError"),
       listError: document.getElementById("listError"),
@@ -915,11 +1005,29 @@ function adminHtml(env) {
       settingsSuccess: document.getElementById("settingsSuccess"),
     };
     let currentKeys = [];
+    let availableModels = [];
+    let customModels = [];
 
-    setActivePage(location.pathname.endsWith("/settings") ? "settings" : "keys");
+    setActivePage(location.pathname.includes("settings") ? "settings" : "keys");
     els.createKey.addEventListener("click", createKey);
     els.copyKey.addEventListener("click", () => navigator.clipboard.writeText(els.newKey.textContent));
     els.settingsKey.addEventListener("change", () => selectSettingsKey(els.settingsKey.value));
+    els.allowAllModels.addEventListener("change", updateModelRestrictionState);
+    els.addCustomModel.addEventListener("click", addCustomModel);
+    els.customModelId.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addCustomModel();
+      }
+    });
+    els.selectAllModels.addEventListener("click", () => {
+      for (const checkbox of modelCheckboxes()) checkbox.checked = true;
+    });
+    els.clearModels.addEventListener("click", () => {
+      for (const checkbox of modelCheckboxes()) checkbox.checked = false;
+      customModels = [];
+      renderCustomModels();
+    });
     els.saveKeySettings.addEventListener("click", saveKeySettings);
 
     async function api(path, options = {}) {
@@ -946,7 +1054,7 @@ function adminHtml(env) {
         });
         els.newKey.textContent = data.key;
         els.newKeyNotice.style.display = "block";
-        els.configureNewKey.href = "/settings?key=" + encodeURIComponent(data.id);
+        els.configureNewKey.href = "/settings/" + encodeURIComponent(data.id);
         await loadKeys();
       } catch (error) {
         els.createError.textContent = error.message;
@@ -965,6 +1073,21 @@ function adminHtml(env) {
       }
     }
 
+    async function loadModels() {
+      const data = await api("/admin/api/models");
+      availableModels = data.models || [];
+      renderModelOptions();
+    }
+
+    async function loadAdminData() {
+      try {
+        await loadModels();
+      } catch (error) {
+        els.listError.textContent = error.message;
+      }
+      await loadKeys();
+    }
+
     async function revokeKey(id) {
       await api("/admin/api/keys/" + encodeURIComponent(id), { method: "DELETE" });
       await loadKeys();
@@ -980,6 +1103,7 @@ function adminHtml(env) {
           method: "PATCH",
           body: JSON.stringify({
             workspace_path: els.settingsWorkspacePath.value,
+            allowed_models: selectedAllowedModels(),
           }),
         });
         els.settingsSuccess.textContent = "Saved.";
@@ -992,35 +1116,36 @@ function adminHtml(env) {
 
     function renderKeys(keys) {
       if (!keys.length) {
-        els.keysBody.innerHTML = '<tr><td colspan="6" class="muted">No keys yet.</td></tr>';
+        els.keysBody.innerHTML = '<tr><td colspan="7" class="muted">No keys yet.</td></tr>';
         return;
       }
       els.keysBody.innerHTML = "";
       for (const key of keys) {
         const tr = document.createElement("tr");
-        tr.innerHTML = "<td></td><td><code></code></td><td><code></code></td><td></td><td></td><td></td>";
+        tr.innerHTML = "<td></td><td><code></code></td><td><code></code></td><td></td><td></td><td></td><td></td>";
         tr.children[0].textContent = key.name;
         tr.children[1].firstChild.textContent = key.key_preview;
         tr.children[2].firstChild.textContent = key.workspace_path || "(server default)";
-        tr.children[3].textContent = formatDate(key.created_at);
-        tr.children[4].textContent = formatDate(key.last_used_at);
+        tr.children[3].textContent = describeModels(key.allowed_models || []);
+        tr.children[4].textContent = formatDate(key.created_at);
+        tr.children[5].textContent = formatDate(key.last_used_at);
         const settingsButton = document.createElement("button");
         settingsButton.className = "secondary";
         settingsButton.textContent = "Settings";
         settingsButton.addEventListener("click", () => {
-          location.href = "/settings?key=" + encodeURIComponent(key.id);
+          location.href = "/settings/" + encodeURIComponent(key.id);
         });
         const button = document.createElement("button");
         button.className = "danger";
         button.textContent = "Revoke";
         button.addEventListener("click", () => revokeKey(key.id));
-        tr.children[5].append(settingsButton, button);
+        tr.children[6].append(settingsButton, button);
         els.keysBody.append(tr);
       }
     }
 
     function renderSettingsOptions(keys) {
-      const previous = new URLSearchParams(location.search).get("key") || els.settingsKey.value;
+      const previous = selectedKeyFromLocation() || els.settingsKey.value;
       els.settingsKey.innerHTML = "";
       for (const key of keys) {
         const option = document.createElement("option");
@@ -1032,6 +1157,7 @@ function adminHtml(env) {
         selectSettingsKey(keys.some((key) => key.id === previous) ? previous : keys[0].id);
       } else {
         els.settingsWorkspacePath.value = "";
+        applyAllowedModels([]);
       }
     }
 
@@ -1040,6 +1166,7 @@ function adminHtml(env) {
       if (!key) return;
       els.settingsKey.value = key.id;
       els.settingsWorkspacePath.value = key.workspace_path || "";
+      applyAllowedModels(key.allowed_models || []);
     }
 
     function setActivePage(page) {
@@ -1050,11 +1177,121 @@ function adminHtml(env) {
       }
     }
 
+    function renderModelOptions() {
+      els.modelOptions.innerHTML = "";
+      for (const model of availableModels) {
+        const label = document.createElement("label");
+        label.className = "modelOption";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = model;
+        checkbox.dataset.modelCheckbox = "1";
+        const text = document.createElement("span");
+        text.textContent = model;
+        label.append(checkbox, text);
+        els.modelOptions.append(label);
+      }
+      const selectedKey = currentKeys.find((key) => key.id === els.settingsKey.value);
+      if (selectedKey) applyAllowedModels(selectedKey.allowed_models || []);
+    }
+
+    function applyAllowedModels(models) {
+      const allowed = unique(models);
+      els.allowAllModels.checked = allowed.length === 0;
+      const allowedSet = new Set(allowed);
+      for (const checkbox of modelCheckboxes()) {
+        checkbox.checked = allowedSet.has(checkbox.value);
+      }
+      customModels = allowed.filter((model) => !availableModels.includes(model));
+      renderCustomModels();
+      updateModelRestrictionState();
+    }
+
+    function selectedAllowedModels() {
+      if (els.allowAllModels.checked) return [];
+      const selected = modelCheckboxes()
+        .filter((checkbox) => checkbox.checked)
+        .map((checkbox) => checkbox.value);
+      const models = unique([...selected, ...customModels]);
+      if (!models.length) {
+        throw new Error("Select at least one model or allow all configured models.");
+      }
+      return models;
+    }
+
+    function addCustomModel() {
+      const model = els.customModelId.value.trim();
+      if (!model) return;
+      if (!customModels.includes(model) && !availableModels.includes(model)) {
+        customModels.push(model);
+      }
+      const checkbox = modelCheckboxes().find((item) => item.value === model);
+      if (checkbox) checkbox.checked = true;
+      els.customModelId.value = "";
+      renderCustomModels();
+    }
+
+    function renderCustomModels() {
+      els.customModels.innerHTML = "";
+      for (const model of customModels) {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        const text = document.createElement("span");
+        text.textContent = model;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "x";
+        remove.addEventListener("click", () => {
+          customModels = customModels.filter((item) => item !== model);
+          renderCustomModels();
+        });
+        tag.append(text, remove);
+        els.customModels.append(tag);
+      }
+    }
+
+    function updateModelRestrictionState() {
+      const disabled = els.allowAllModels.checked;
+      els.modelRestrictionPanel.style.opacity = disabled ? ".55" : "1";
+      for (const control of [
+        ...modelCheckboxes(),
+        els.customModelId,
+        els.addCustomModel,
+        els.selectAllModels,
+        els.clearModels,
+      ]) {
+        control.disabled = disabled;
+      }
+    }
+
+    function modelCheckboxes() {
+      return Array.from(document.querySelectorAll("[data-model-checkbox]"));
+    }
+
+    function describeModels(models) {
+      const allowed = unique(models);
+      if (!allowed.length) return "All";
+      if (allowed.length <= 2) return allowed.join(", ");
+      return allowed.slice(0, 2).join(", ") + " +" + (allowed.length - 2);
+    }
+
+    function selectedKeyFromLocation() {
+      const queryKey = new URLSearchParams(location.search).get("key");
+      if (queryKey) return queryKey;
+      const parts = location.pathname.split("/").filter(Boolean);
+      if (parts[0] === "admin" && parts[1] === "settings" && parts[2]) return decodeURIComponent(parts[2]);
+      return parts[0] === "settings" && parts[1] ? decodeURIComponent(parts[1]) : "";
+    }
+
+    function unique(values) {
+      return Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
+    }
+
     function formatDate(value) {
       return value ? new Date(value).toLocaleString() : "";
     }
 
-    loadKeys();
+    loadAdminData();
   </script>
 </body>
 </html>`;

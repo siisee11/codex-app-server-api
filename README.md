@@ -12,6 +12,7 @@ responses.
 - `GET /healthz`
 - `GET /admin`
 - `GET /admin/api/keys`
+- `GET /admin/api/models`
 - `POST /admin/api/keys`
 - `PATCH /admin/api/keys/:id`
 - `DELETE /admin/api/keys/:id`
@@ -59,10 +60,12 @@ If `API_BEARER_TOKEN` is set, pass `Authorization: Bearer <token>`.
 ## API Keys
 
 Open `http://127.0.0.1:8787/admin` to issue API keys from the local web UI,
-then open `http://127.0.0.1:8787/settings` to set a key's workspace scope.
+then open `http://127.0.0.1:8787/settings/<key-id>` to set a key's workspace
+scope and allowed models.
 The admin token is read from `ADMIN_TOKEN` or generated at `data/admin-token.txt`
 on first start. API key records are stored in `data/api-keys.json`; only SHA-256
 hashes are persisted, so the full key is shown once when it is created.
+An empty `allowed_models` list means the key can use all configured models.
 
 By default generation endpoints require an issued API key:
 
