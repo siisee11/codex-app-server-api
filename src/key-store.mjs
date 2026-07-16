@@ -61,6 +61,7 @@ export class KeyStore {
   listKeys() {
     return this.data.keys
       .slice()
+      .filter((key) => !key.revoked_at)
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
       .map((key) => publicKeyRecord(key));
   }
@@ -82,6 +83,22 @@ export class KeyStore {
     this.data.keys.push(record);
     await this.#save();
     return { ...publicKeyRecord(record), key: secret };
+  }
+
+  async updateKey(id, { name, workspacePath } = {}) {
+    const key = this.data.keys.find((item) => item.id === id);
+    if (!key || key.revoked_at) return null;
+
+    if (name !== undefined) {
+      key.name = String(name || "API key").trim().slice(0, 120) || "API key";
+    }
+    if (workspacePath !== undefined) {
+      key.workspace_path = String(workspacePath || "").trim();
+    }
+    key.updated_at = new Date().toISOString();
+
+    await this.#save();
+    return publicKeyRecord(key);
   }
 
   async revokeKey(id) {
@@ -110,6 +127,7 @@ function publicKeyRecord(key) {
     key_preview: key.key_preview,
     workspace_path: key.workspace_path || "",
     created_at: key.created_at,
+    updated_at: key.updated_at || null,
     last_used_at: key.last_used_at,
     revoked_at: key.revoked_at,
   };

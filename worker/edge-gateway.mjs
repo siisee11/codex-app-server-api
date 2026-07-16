@@ -55,7 +55,7 @@ async function handleAdminRequest(request, env) {
     return adminUnauthorizedResponse(request);
   }
 
-  if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/admin")) {
+  if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/admin" || url.pathname === "/settings" || url.pathname === "/admin/settings")) {
     return htmlResponse(adminHtml(env));
   }
 
@@ -143,7 +143,7 @@ async function proxyToOrigin(request, env, options = {}) {
   const responseHeaders = new Headers(upstream.headers);
   responseHeaders.set("access-control-allow-origin", "*");
   responseHeaders.set("access-control-allow-headers", "authorization,content-type,x-api-key,x-goog-api-key,x-workspace-path");
-  responseHeaders.set("access-control-allow-methods", "GET,POST,DELETE,OPTIONS");
+  responseHeaders.set("access-control-allow-methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
   responseHeaders.set("x-codex-edge-gateway", "1");
 
   if (options.admin) {
@@ -406,7 +406,7 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization,content-type,x-api-key,x-goog-api-key,x-workspace-path",
-    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
   };
 }
 
@@ -587,7 +587,7 @@ function adminHtml(env) {
   const apiExample = `curl https://${env.API_HOST}/v1/responses \\
   -H 'authorization: Bearer sk-codex-...' \\
   -H 'content-type: application/json' \\
-  -d '{"model":"gpt-5.4","workspace_path":"/Users/dev/git/sub2api","input":"Summarize this repo."}'`;
+  -d '{"model":"gpt-5.4","input":"Summarize this repo."}'`;
 
   return `<!doctype html>
 <html lang="en">
@@ -654,6 +654,36 @@ function adminHtml(env) {
       background: #fff;
       color: inherit;
     }
+    select {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #c8d0dc;
+      border-radius: 6px;
+      padding: 10px 11px;
+      font: inherit;
+      background: #fff;
+      color: inherit;
+    }
+    nav {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 18px;
+      flex-wrap: wrap;
+    }
+    nav a {
+      border: 1px solid #c8d0dc;
+      border-radius: 6px;
+      color: inherit;
+      padding: 8px 11px;
+      text-decoration: none;
+      font-weight: 650;
+      font-size: 14px;
+    }
+    nav a.active {
+      background: #17191f;
+      border-color: #17191f;
+      color: #fff;
+    }
     button {
       border: 1px solid #17191f;
       background: #17191f;
@@ -684,6 +714,12 @@ function adminHtml(env) {
       grid-template-columns: 1fr 1fr auto;
       gap: 12px;
       align-items: end;
+    }
+    .page {
+      display: none;
+    }
+    .page.active {
+      display: block;
     }
     table {
       width: 100%;
@@ -728,6 +764,12 @@ function adminHtml(env) {
       color: #9f1d1d;
       font-size: 14px;
     }
+    .success {
+      min-height: 20px;
+      margin-top: 8px;
+      color: #146c43;
+      font-size: 14px;
+    }
     @media (max-width: 760px) {
       header, .grid {
         display: block;
@@ -745,14 +787,14 @@ function adminHtml(env) {
         background: #101319;
         color: #edf1f7;
       }
-      section, input, button.secondary {
+      section, input, select, button.secondary {
         background: #181c23;
         border-color: #303744;
       }
       p, .muted, th {
         color: #a7b0bf;
       }
-      input, button.secondary {
+      input, select, button.secondary {
         color: #edf1f7;
       }
       .notice {
@@ -780,68 +822,105 @@ function adminHtml(env) {
       </div>
     </header>
 
-    <section>
-      <h2>Create API Key</h2>
-      <div class="grid">
-        <div>
-          <label for="keyName">Name</label>
-          <input id="keyName" placeholder="production key">
+    <nav>
+      <a href="/" data-page-link="keys">API Keys</a>
+      <a href="/settings" data-page-link="settings">Settings</a>
+    </nav>
+
+    <div id="keysPage" class="page">
+      <section>
+        <h2>Create API Key</h2>
+        <div class="grid" style="grid-template-columns: 1fr auto">
+          <div>
+            <label for="keyName">Name</label>
+            <input id="keyName" placeholder="production key">
+          </div>
+          <button id="createKey">Create key</button>
         </div>
-        <div>
-          <label for="workspacePath">Workspace path</label>
-          <input id="workspacePath" value="/Users/dev/git/sub2api">
+        <div id="createError" class="error"></div>
+      </section>
+
+      <section id="newKeyNotice" class="notice">
+        <h2>New Key</h2>
+        <p>Copy this value now. Only the origin server stores a hash after creation.</p>
+        <pre id="newKey"></pre>
+        <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap">
+          <button id="copyKey" class="secondary">Copy</button>
+          <a id="configureNewKey" href="/settings" class="muted">Settings</a>
         </div>
-        <button id="createKey">Create key</button>
-      </div>
-      <div id="createError" class="error"></div>
-    </section>
+      </section>
 
-    <section id="newKeyNotice" class="notice">
-      <h2>New Key</h2>
-      <p>Copy this value now. Only the origin server stores a hash after creation.</p>
-      <pre id="newKey"></pre>
-      <button id="copyKey" class="secondary" style="margin-top: 10px">Copy</button>
-    </section>
+      <section>
+        <h2>Issued Keys</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Key</th>
+              <th>Workspace</th>
+              <th>Created</th>
+              <th>Last used</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="keysBody"></tbody>
+        </table>
+        <div id="listError" class="error"></div>
+      </section>
 
-    <section>
-      <h2>Issued Keys</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Key</th>
-            <th>Workspace</th>
-            <th>Created</th>
-            <th>Last used</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="keysBody"></tbody>
-      </table>
-      <div id="listError" class="error"></div>
-    </section>
+      <section>
+        <h2>Example</h2>
+        <pre>${escapeHtml(apiExample)}</pre>
+      </section>
+    </div>
 
-    <section>
-      <h2>Example</h2>
-      <pre>${escapeHtml(apiExample)}</pre>
-    </section>
+    <div id="settingsPage" class="page">
+      <section>
+        <h2>Key Settings</h2>
+        <div class="grid" style="grid-template-columns: 1fr 1fr auto">
+          <div>
+            <label for="settingsKey">API key</label>
+            <select id="settingsKey"></select>
+          </div>
+          <div>
+            <label for="settingsWorkspacePath">Workspace path</label>
+            <input id="settingsWorkspacePath" placeholder="/Users/dev/git/sub2api">
+          </div>
+          <button id="saveKeySettings">Save</button>
+        </div>
+        <div class="muted" style="margin-top: 8px">Leave workspace blank to use the server default workspace.</div>
+        <div id="settingsError" class="error"></div>
+        <div id="settingsSuccess" class="success"></div>
+      </section>
+    </div>
   </main>
 
   <script>
     const els = {
+      keysPage: document.getElementById("keysPage"),
+      settingsPage: document.getElementById("settingsPage"),
       keyName: document.getElementById("keyName"),
-      workspacePath: document.getElementById("workspacePath"),
       createKey: document.getElementById("createKey"),
       newKeyNotice: document.getElementById("newKeyNotice"),
       newKey: document.getElementById("newKey"),
       copyKey: document.getElementById("copyKey"),
+      configureNewKey: document.getElementById("configureNewKey"),
       keysBody: document.getElementById("keysBody"),
+      settingsKey: document.getElementById("settingsKey"),
+      settingsWorkspacePath: document.getElementById("settingsWorkspacePath"),
+      saveKeySettings: document.getElementById("saveKeySettings"),
       createError: document.getElementById("createError"),
       listError: document.getElementById("listError"),
+      settingsError: document.getElementById("settingsError"),
+      settingsSuccess: document.getElementById("settingsSuccess"),
     };
+    let currentKeys = [];
 
+    setActivePage(location.pathname.endsWith("/settings") ? "settings" : "keys");
     els.createKey.addEventListener("click", createKey);
     els.copyKey.addEventListener("click", () => navigator.clipboard.writeText(els.newKey.textContent));
+    els.settingsKey.addEventListener("change", () => selectSettingsKey(els.settingsKey.value));
+    els.saveKeySettings.addEventListener("click", saveKeySettings);
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
@@ -863,11 +942,11 @@ function adminHtml(env) {
           method: "POST",
           body: JSON.stringify({
             name: els.keyName.value,
-            workspace_path: els.workspacePath.value,
           }),
         });
         els.newKey.textContent = data.key;
         els.newKeyNotice.style.display = "block";
+        els.configureNewKey.href = "/settings?key=" + encodeURIComponent(data.id);
         await loadKeys();
       } catch (error) {
         els.createError.textContent = error.message;
@@ -878,7 +957,9 @@ function adminHtml(env) {
       els.listError.textContent = "";
       try {
         const data = await api("/admin/api/keys");
-        renderKeys(data.keys || []);
+        currentKeys = data.keys || [];
+        renderKeys(currentKeys);
+        renderSettingsOptions(currentKeys);
       } catch (error) {
         els.listError.textContent = error.message;
       }
@@ -887,6 +968,26 @@ function adminHtml(env) {
     async function revokeKey(id) {
       await api("/admin/api/keys/" + encodeURIComponent(id), { method: "DELETE" });
       await loadKeys();
+    }
+
+    async function saveKeySettings() {
+      els.settingsError.textContent = "";
+      els.settingsSuccess.textContent = "";
+      const id = els.settingsKey.value;
+      if (!id) return;
+      try {
+        await api("/admin/api/keys/" + encodeURIComponent(id), {
+          method: "PATCH",
+          body: JSON.stringify({
+            workspace_path: els.settingsWorkspacePath.value,
+          }),
+        });
+        els.settingsSuccess.textContent = "Saved.";
+        await loadKeys();
+        selectSettingsKey(id);
+      } catch (error) {
+        els.settingsError.textContent = error.message;
+      }
     }
 
     function renderKeys(keys) {
@@ -900,15 +1001,52 @@ function adminHtml(env) {
         tr.innerHTML = "<td></td><td><code></code></td><td><code></code></td><td></td><td></td><td></td>";
         tr.children[0].textContent = key.name;
         tr.children[1].firstChild.textContent = key.key_preview;
-        tr.children[2].firstChild.textContent = key.workspace_path || "";
+        tr.children[2].firstChild.textContent = key.workspace_path || "(server default)";
         tr.children[3].textContent = formatDate(key.created_at);
         tr.children[4].textContent = formatDate(key.last_used_at);
+        const settingsButton = document.createElement("button");
+        settingsButton.className = "secondary";
+        settingsButton.textContent = "Settings";
+        settingsButton.addEventListener("click", () => {
+          location.href = "/settings?key=" + encodeURIComponent(key.id);
+        });
         const button = document.createElement("button");
         button.className = "danger";
         button.textContent = "Revoke";
         button.addEventListener("click", () => revokeKey(key.id));
-        tr.children[5].append(button);
+        tr.children[5].append(settingsButton, button);
         els.keysBody.append(tr);
+      }
+    }
+
+    function renderSettingsOptions(keys) {
+      const previous = new URLSearchParams(location.search).get("key") || els.settingsKey.value;
+      els.settingsKey.innerHTML = "";
+      for (const key of keys) {
+        const option = document.createElement("option");
+        option.value = key.id;
+        option.textContent = key.name + " (" + key.key_preview + ")";
+        els.settingsKey.append(option);
+      }
+      if (keys.length) {
+        selectSettingsKey(keys.some((key) => key.id === previous) ? previous : keys[0].id);
+      } else {
+        els.settingsWorkspacePath.value = "";
+      }
+    }
+
+    function selectSettingsKey(id) {
+      const key = currentKeys.find((item) => item.id === id);
+      if (!key) return;
+      els.settingsKey.value = key.id;
+      els.settingsWorkspacePath.value = key.workspace_path || "";
+    }
+
+    function setActivePage(page) {
+      els.keysPage.classList.toggle("active", page === "keys");
+      els.settingsPage.classList.toggle("active", page === "settings");
+      for (const link of document.querySelectorAll("[data-page-link]")) {
+        link.classList.toggle("active", link.dataset.pageLink === page);
       }
     }
 

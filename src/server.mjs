@@ -40,7 +40,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, codex: process.env.CODEX_BIN || "codex" });
     }
 
-    if (req.method === "GET" && (pathname === "/" || pathname === "/admin")) {
+    if (req.method === "GET" && (pathname === "/" || pathname === "/admin" || pathname === "/settings" || pathname === "/admin/settings")) {
       return sendHtml(res, 200, adminHtml({
         authRequired: API_AUTH_REQUIRED,
         defaultWorkspace: DEFAULT_WORKSPACE,
@@ -101,12 +101,32 @@ async function handleAdminApi(req, res, pathname) {
 
   if (req.method === "POST" && pathname === "/admin/api/keys") {
     const body = await readJson(req);
-    const workspace = validateWorkspace(body.workspace_path || body.workspacePath || DEFAULT_WORKSPACE);
+    const rawWorkspace = body.workspace_path || body.workspacePath || "";
+    const workspace = rawWorkspace ? validateWorkspace(rawWorkspace) : "";
     const key = await keyStore.createKey({
       name: body.name,
       workspacePath: workspace,
     });
     return sendJson(res, 201, key);
+  }
+
+  if ((req.method === "PATCH" || req.method === "PUT") && pathname.startsWith("/admin/api/keys/")) {
+    const id = decodeURIComponent(pathname.slice("/admin/api/keys/".length));
+    const body = await readJson(req);
+    const updates = {};
+    if (body.name !== undefined) {
+      updates.name = body.name;
+    }
+    if (body.workspace_path !== undefined || body.workspacePath !== undefined) {
+      const rawWorkspace = body.workspace_path ?? body.workspacePath ?? "";
+      updates.workspacePath = rawWorkspace ? validateWorkspace(rawWorkspace) : "";
+    }
+
+    const updated = await keyStore.updateKey(id, updates);
+    if (!updated) {
+      return sendJson(res, 404, { error: { type: "not_found_error", message: "API key not found" } });
+    }
+    return sendJson(res, 200, updated);
   }
 
   if (req.method === "DELETE" && pathname.startsWith("/admin/api/keys/")) {
@@ -251,16 +271,28 @@ function normalizePathname(pathname) {
 }
 
 function resolveWorkspace(req, body) {
-  const raw = body.cwd ||
+  const requestedWorkspace = body.cwd ||
     body.workspace_path ||
     body.workspacePath ||
     body.workspace ||
     req.headers["x-workspace-path"] ||
+    "";
+  const keyWorkspace = req.apiKey?.workspace_path || "";
+
+  if (req.apiKey && !keyWorkspace && requestedWorkspace) {
+    throw Object.assign(new Error("workspace path is not configured for this API key"), {
+      statusCode: 403,
+      type: "permission_error",
+    });
+  }
+
+  const raw = requestedWorkspace ||
+    keyWorkspace ||
     req.apiKey?.workspace_path ||
     DEFAULT_WORKSPACE;
   const workspace = validateWorkspace(raw);
-  if (req.apiKey?.workspace_path) {
-    const scope = validateWorkspace(req.apiKey.workspace_path);
+  if (keyWorkspace) {
+    const scope = validateWorkspace(keyWorkspace);
     if (workspace !== scope && !workspace.startsWith(`${scope}${path.sep}`)) {
       throw Object.assign(new Error("workspace path is outside this API key scope"), {
         statusCode: 403,
@@ -366,7 +398,7 @@ function sendJson(res, status, data) {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization,content-type,x-api-key,x-goog-api-key,x-workspace-path,x-admin-token",
-    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
   });
   res.end(JSON.stringify(data, null, 2));
 }
@@ -380,7 +412,7 @@ function sendEmpty(res, status) {
   res.writeHead(status, {
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization,content-type,x-api-key,x-goog-api-key,x-workspace-path,x-admin-token",
-    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
   });
   res.end();
 }
