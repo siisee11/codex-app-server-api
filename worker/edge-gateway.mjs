@@ -960,10 +960,10 @@ function adminHtml(env) {
             <span>Allow all configured models</span>
           </label>
           <div id="modelRestrictionPanel">
-            <div class="muted" style="margin-top: 8px">Choose which models this API key can call. You can add custom model IDs if needed.</div>
+            <div class="muted" style="margin-top: 8px">Choose which models this API key can call. Custom IDs and suffix wildcards like <code>gpt-5.6-*</code> are supported.</div>
             <div id="modelOptions" class="modelOptions"></div>
             <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap">
-              <input id="customModelId" placeholder="custom-model-id">
+              <input id="customModelId" placeholder="gpt-5.6-*">
               <button id="addCustomModel" class="secondary" type="button">Add model</button>
               <button id="selectAllModels" class="secondary" type="button">Select all</button>
               <button id="clearModels" class="secondary" type="button">Clear</button>

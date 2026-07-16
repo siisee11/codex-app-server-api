@@ -1,3 +1,18 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+
+const DEFAULT_MODEL_IDS = [
+  "gpt-5.5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex-spark",
+  "gpt-5-codex",
+];
+
 export function extractPromptFromResponses(body) {
   if (typeof body.input === "string") return body.input;
   if (Array.isArray(body.input)) return body.input.map(renderInputItem).filter(Boolean).join("\n\n");
@@ -106,15 +121,17 @@ export function chatCompletionResult({ model, outputText, threadId, turn }) {
 }
 
 export function availableModelIds() {
-  return (process.env.CODEX_MODELS || "gpt-5.4,gpt-5.3-codex,gpt-5.3-codex-spark,gpt-5-codex")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  if (process.env.CODEX_MODELS) {
+    return normalizeModelIds(process.env.CODEX_MODELS.split(","));
+  }
+
+  const cached = readCodexModelsCache();
+  return cached.length ? cached : DEFAULT_MODEL_IDS;
 }
 
 export function modelList(allowedModels = []) {
   const allowed = normalizeModelIds(allowedModels);
-  const ids = allowed.length ? allowed : availableModelIds();
+  const ids = allowed.length ? expandAllowedModelIds(allowed, availableModelIds()) : availableModelIds();
   return {
     object: "list",
     data: ids.map((id) => ({
@@ -124,6 +141,21 @@ export function modelList(allowedModels = []) {
       owned_by: "codex-app-server",
     })),
   };
+}
+
+export function isModelAllowed(model, allowedModels = []) {
+  const allowed = normalizeModelIds(allowedModels);
+  if (!allowed.length) return true;
+  return allowed.some((pattern) => matchesModelPattern(model, pattern));
+}
+
+export function matchesModelPattern(model, pattern) {
+  const id = String(model || "");
+  const value = String(pattern || "").trim();
+  if (!id || !value) return false;
+  if (value === "*") return true;
+  if (!value.includes("*")) return id === value;
+  return isSuffixWildcard(value) && id.startsWith(value.slice(0, -1));
 }
 
 export function normalizeModelIds(models = []) {
@@ -136,6 +168,51 @@ export function normalizeModelIds(models = []) {
     normalized.push(id);
   }
   return normalized;
+}
+
+function expandAllowedModelIds(allowedModels, availableModels) {
+  const ids = [];
+  for (const allowed of allowedModels) {
+    if (isSuffixWildcard(allowed)) {
+      ids.push(...availableModels.filter((model) => matchesModelPattern(model, allowed)));
+    } else {
+      ids.push(allowed);
+    }
+  }
+  return normalizeModelIds(ids);
+}
+
+function readCodexModelsCache() {
+  try {
+    const raw = readFileSync(codexModelsCachePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    const models = Array.isArray(parsed) ? parsed : parsed?.models;
+    if (!Array.isArray(models)) return [];
+
+    return normalizeModelIds(models
+      .filter((model) => model && typeof model === "object")
+      .filter((model) => model.visibility !== "hide")
+      .sort((a, b) => modelPriority(a) - modelPriority(b))
+      .map((model) => model.slug || model.id));
+  } catch {
+    return [];
+  }
+}
+
+function codexModelsCachePath() {
+  if (process.env.CODEX_MODELS_CACHE) return process.env.CODEX_MODELS_CACHE;
+  const codexHome = process.env.CODEX_HOME || path.join(homedir(), ".codex");
+  return path.join(codexHome, "models_cache.json");
+}
+
+function isSuffixWildcard(pattern) {
+  const value = String(pattern || "");
+  const starIndex = value.indexOf("*");
+  return starIndex !== -1 && starIndex === value.length - 1 && value.lastIndexOf("*") === starIndex;
+}
+
+function modelPriority(model) {
+  return Number.isFinite(model?.priority) ? model.priority : Number.MAX_SAFE_INTEGER;
 }
 
 function randomId() {

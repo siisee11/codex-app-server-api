@@ -11,6 +11,7 @@ import {
   chatCompletionResult,
   extractPromptFromChatCompletions,
   extractPromptFromResponses,
+  isModelAllowed,
   modelList,
   normalizeModelIds,
   responsesResult,
@@ -305,7 +306,7 @@ function assertModelAllowed(req, model) {
     });
   }
 
-  if (!allowedModels.includes(String(model))) {
+  if (!isModelAllowed(model, allowedModels)) {
     throw Object.assign(new Error(`model ${model} is not allowed for this API key`), {
       statusCode: 403,
       type: "permission_error",

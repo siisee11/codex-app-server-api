@@ -56,6 +56,8 @@ CODEX_MODELS=gpt-5.4,gpt-5.3-codex,gpt-5-codex
 ```
 
 If `API_BEARER_TOKEN` is set, pass `Authorization: Bearer <token>`.
+If `CODEX_MODELS` is not set, the admin model picker reads visible models from
+`~/.codex/models_cache.json` and falls back to the built-in Codex model list.
 
 ## API Keys
 
@@ -66,6 +68,8 @@ The admin token is read from `ADMIN_TOKEN` or generated at `data/admin-token.txt
 on first start. API key records are stored in `data/api-keys.json`; only SHA-256
 hashes are persisted, so the full key is shown once when it is created.
 An empty `allowed_models` list means the key can use all configured models.
+Allowed model entries may be exact IDs like `gpt-5.6-sol` or suffix wildcards
+like `gpt-5.6-*`.
 
 By default generation endpoints require an issued API key:
 
