@@ -67,6 +67,9 @@ scope and allowed models.
 The admin token is read from `ADMIN_TOKEN` or generated at `data/admin-token.txt`
 on first start. API key records are stored in `data/api-keys.json`; only SHA-256
 hashes are persisted, so the full key is shown once when it is created.
+The web UI provides copy buttons for the one-time full key value and for newly
+created keys in the current browser session. Existing keys only show their
+preview because the full secret is not stored.
 An empty `allowed_models` list means the key can use all configured models.
 Allowed model entries may be exact IDs like `gpt-5.6-sol` or suffix wildcards
 like `gpt-5.6-*`.

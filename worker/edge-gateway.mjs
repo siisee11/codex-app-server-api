@@ -713,6 +713,10 @@ function adminHtml(env) {
       background: #9f1d1d;
       border-color: #9f1d1d;
     }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .55;
+    }
     .headerActions {
       display: flex;
       align-items: flex-start;
@@ -771,6 +775,16 @@ function adminHtml(env) {
     }
     .checkline input {
       width: auto;
+    }
+    .keyCell {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .smallButton {
+      padding: 6px 9px;
+      font-size: 12px;
     }
     .modelOptions {
       display: grid;
@@ -1007,10 +1021,11 @@ function adminHtml(env) {
     let currentKeys = [];
     let availableModels = [];
     let customModels = [];
+    const issuedSecrets = new Map();
 
     setActivePage(location.pathname.includes("settings") ? "settings" : "keys");
     els.createKey.addEventListener("click", createKey);
-    els.copyKey.addEventListener("click", () => navigator.clipboard.writeText(els.newKey.textContent));
+    els.copyKey.addEventListener("click", () => copyText(els.newKey.textContent, els.copyKey));
     els.settingsKey.addEventListener("change", () => selectSettingsKey(els.settingsKey.value));
     els.allowAllModels.addEventListener("change", updateModelRestrictionState);
     els.addCustomModel.addEventListener("click", addCustomModel);
@@ -1052,6 +1067,7 @@ function adminHtml(env) {
             name: els.keyName.value,
           }),
         });
+        issuedSecrets.set(data.id, data.key);
         els.newKey.textContent = data.key;
         els.newKeyNotice.style.display = "block";
         els.configureNewKey.href = "/settings/" + encodeURIComponent(data.id);
@@ -1122,9 +1138,10 @@ function adminHtml(env) {
       els.keysBody.innerHTML = "";
       for (const key of keys) {
         const tr = document.createElement("tr");
-        tr.innerHTML = "<td></td><td><code></code></td><td><code></code></td><td></td><td></td><td></td><td></td>";
+        tr.innerHTML = '<td></td><td><div class="keyCell"><code></code></div></td><td><code></code></td><td></td><td></td><td></td><td></td>';
         tr.children[0].textContent = key.name;
-        tr.children[1].firstChild.textContent = key.key_preview;
+        tr.children[1].querySelector("code").textContent = key.key_preview;
+        tr.children[1].querySelector(".keyCell").append(copyKeyButton(key));
         tr.children[2].firstChild.textContent = key.workspace_path || "(server default)";
         tr.children[3].textContent = describeModels(key.allowed_models || []);
         tr.children[4].textContent = formatDate(key.created_at);
@@ -1142,6 +1159,21 @@ function adminHtml(env) {
         tr.children[6].append(settingsButton, button);
         els.keysBody.append(tr);
       }
+    }
+
+    function copyKeyButton(key) {
+      const button = document.createElement("button");
+      button.className = "secondary smallButton";
+      button.type = "button";
+      button.textContent = "Copy";
+      const secret = issuedSecrets.get(key.id);
+      if (!secret) {
+        button.disabled = true;
+        button.title = "Full key is only available immediately after creation.";
+        return button;
+      }
+      button.addEventListener("click", () => copyText(secret, button));
+      return button;
     }
 
     function renderSettingsOptions(keys) {
@@ -1289,6 +1321,32 @@ function adminHtml(env) {
 
     function formatDate(value) {
       return value ? new Date(value).toLocaleString() : "";
+    }
+
+    async function copyText(text, button) {
+      const value = String(text || "");
+      if (!value) return;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.append(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      if (button) markCopied(button);
+    }
+
+    function markCopied(button) {
+      const previous = button.textContent;
+      button.textContent = "Copied";
+      setTimeout(() => {
+        button.textContent = previous;
+      }, 1200);
     }
 
     loadAdminData();
